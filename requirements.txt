@@ -1,0 +1,11 @@
+huggingface-hub==0.23.0
+jupyter==1.0.0
+matplotlib==3.8.4
+nltk==3.8.1
+numpy==1.26.4
+pandas==2.2.2
+rouge_score==0.1.2
+scikit-learn==1.4.2
+torch==2.3.0
+tqdm==4.66.4
+transformers==4.40.1
