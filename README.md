@@ -12,7 +12,7 @@ It will initialize the workspace by performing the following steps:
 1. It will install the required Python modules by running `pip install -r "./requirements.txt"`
 2. It will download the necessary Python code to compute the [BARTScore](https://github.com/neulab/BARTScore) by Yuan et al. (2021) to "./resources/bart_score.py".
 3. It will download and preprocess the [Food Incidents Dataset](https://doi.org/10.5281/zenodo.10820657) by Randl et al. (2024) to "./data/food incidents - hazard/"
-4. It will download and preprocess the [Movie Review Dataset](https://www.cs.cornell.edu/people/pabo/movie-review-data/) by Pang et al. (2005) to "./data/movies/"
+4. It will download and preprocess the "Movies" Task (Zaidan and Eisner, 2008) of the [ERASER benchmark](http://www.eraserbenchmark.com/) by DeYoung et al. (2020) to "./data/movies/"
 
 When preprocessing is finished, the experiments can be rerun using the shell script [`./run.sh`](https://github.com/k-randl/self-explaining_llms/blob/main/run.sh) which will run each of the following python files in turn:
 
@@ -31,4 +31,6 @@ Finally, the Jupyter Notebooks [`evaluate-hazard.ipynb`](https://github.com/k-ra
 
 [Randl, K., Karvounis, M., Marinos, G., Pavlopoulos, J., Lindgren, T., & Henriksson, A. (2024). Food Recall Incidents [Data set]. Zenodo.](https://doi.org/10.5281/zenodo.10820657)
 
-[Pang, B., & Lee, L. (2005). Seeing Stars: Exploiting Class Relationships for Sentiment Categorization with Respect to Rating Scales. Annual Meeting of the Association for Computational Linguistics.](https://aclanthology.org/P05-1015/)
+[Jay DeYoung, Sarthak Jain, Nazneen Fatema Rajani, Eric Lehman, Caiming Xiong, Richard Socher, and Byron C. Wallace. (2020). ERASER: A Benchmark to Evaluate Rationalized NLP Models. In Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 4443–4458, Online. Association for Computational Linguistics.](https://aclanthology.org/2020.acl-main.408/)
+
+[Omar Zaidan and Jason Eisner. (2008). Modeling Annotators: A Generative Approach to Learning from Annotator Rationales. In Proceedings of the 2008 Conference on Empirical Methods in Natural Language Processing, pages 31–40, Honolulu, Hawaii. Association for Computational Linguistics.](https://aclanthology.org/D08-1004/)
