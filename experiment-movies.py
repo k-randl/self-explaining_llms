@@ -1,10 +1,11 @@
 import os
+import sys
 import re
 import pickle
+import random
 import torch
 from huggingface_hub import login
 from getpass import getpass
-from transformers import GenerationConfig
 from tqdm.autonotebook import tqdm
 
 from resources.preprocessing import PromptLoaderIMDB
@@ -12,36 +13,36 @@ from resources.modelling import ChatGenerationPipeline
 from resources.testing import PerturbationTester, similarityTest, findSpan
 
 torch.manual_seed(42)
-login(token=getpass(prompt='Huggingface login  token: '))
+if os.path.exists('.huggingface.token'):
+    with open('.huggingface.token', 'r') as file:
+        login(token=file.read())
+
+else: login(token=getpass(prompt='Huggingface login  token: '))
+
 
 MAX_SEQ_LEN = 512
 MAX_GEN_LEN = 128
-MODEL_NAME  = "meta-llama/Meta-Llama-3-8B-Instruct"
+MODEL_NAME  = sys.argv[1]
 
 #====================================================================================================#
 # Prepare:                                                                                           #
 #====================================================================================================#
 
-# Load data:
-with open('data/movies/val_sample.jsonl', 'r') as file:
-    data_test = file.read().split('\n')
-
 # Load Pipeline:
 pipe = ChatGenerationPipeline.from_pretrained(
     MODEL_NAME,
+    max_seq_len = MAX_SEQ_LEN,
+    max_gen_len = MAX_GEN_LEN,
     device_map='auto',
     torch_dtype=torch.bfloat16,
-    attn_implementation="eager"
+    attn_implementation="eager",
 )
-pipe.model.generation_config = GenerationConfig(
-    bos_token_id = pipe.tokenizer.convert_tokens_to_ids('<|begin_of_text|>'),
-    eos_token_id = pipe.tokenizer.convert_tokens_to_ids('<|eot_id|>'),
-    pad_token_id = pipe.tokenizer.convert_tokens_to_ids('<|eot_id|>'),
-    
-    max_length = MAX_SEQ_LEN,
-    max_new_tokens = MAX_GEN_LEN,
-)
-pipe.model.config
+
+# Load data:
+with open('data/movies/val_sample.jsonl', 'r') as file:
+    data_test = file.read().split('\n')
+labels_test = ['negative', 'positive']
+tokens_test = [pipe.tokenizer.convert_ids_to_tokens(pipe.tokenizer(l)['input_ids'][1:]) for l in labels_test]
 
 #====================================================================================================#
 # Prompt:                                                                                            #
@@ -67,11 +68,10 @@ for step, s in enumerate(tqdm(data_test[:-1])):
 
     # create prompt:
     p0, label, spans = loader.createPrompt(s)
-    outputs = ['Negative', 'Positive']
 
     # generation:
-    chat, input_ids, output_ids = pipe.generate(p0, output_attentions=True, output_hidden_states=True, compute_grads=outputs)
-    
+    chat, input_ids, output_ids = pipe.generate(p0, output_attentions=True, output_hidden_states=True, compute_grads=tokens_test)
+
     result = {
         'chat': chat,
         'tokens': pipe.tokenizer.convert_ids_to_tokens(output_ids[0]),
@@ -83,7 +83,7 @@ for step, s in enumerate(tqdm(data_test[:-1])):
         },
         'label': {
             'text': label.lower(),
-            'tokens': [label],
+            'tokens': tokens_test[labels_test.index(label.lower())],
         },
         'prediction': {
             'text': chat[1][1][:8].lower(),
@@ -91,10 +91,10 @@ for step, s in enumerate(tqdm(data_test[:-1])):
         },
         'perturbation': {},
         'spans': {},
-        'AGrad': pipe.model.aGrad(outputs=outputs),
-        'Grad': pipe.model.getHiddenStateGradients(outputs=outputs),
-        'GradIn': pipe.model.GradIn(outputs=outputs),
-        'IGrad': pipe.model.iGrad(outputs=outputs),
+        'AGrad': pipe.aGrad(),
+        'Grad': pipe.grad(),
+        'GradIn': pipe.gradIn(),
+        'IGrad': pipe.iGrad(),
     }
 
 
@@ -106,23 +106,25 @@ for step, s in enumerate(tqdm(data_test[:-1])):
     y_start = result['prediction']['index']
     y       = int(result['prediction']['text'] == 'positive')
 
+    # generate counterfactual label:
+    cf_label = labels_test[1-y]
+
     pt = PerturbationTester(
         input_ids, result['sample']['start'], result['sample']['end'], pipe.mask_token_id,
-        pipe.model, pipe.tokenizer,
-        pad_token_id = pipe.tokenizer.convert_tokens_to_ids('<|eot_id|>')
+        pipe.model, pipe.tokenizer
     )
 
     # attention based explanations:
-    importance = result['AGrad'][0, y, :, y_start-1, :y_start].mean(axis=0)
+    importance = result['AGrad'].mean(axis=(1,))[labels_test.index(result['prediction']['text'])]
     result['perturbation']['AGrad'] = pt.test(importance, double_sided=True)
     result['AGrad'] = result['AGrad'].detach().cpu().numpy()
 
     # gradient based explanations:
-    importance = result['GradIn'][0, y, :y_start, :].mean(axis=-1)
+    importance = result['GradIn'].mean(axis=(-1,))[labels_test.index(result['prediction']['text'])]
     result['perturbation']['GradIn'] = pt.test(importance, double_sided=True)
     result['GradIn'] = result['GradIn'].detach().cpu().numpy()
 
-    importance = result['IGrad'][0, :y_start, :, y].mean(axis=1)
+    importance = result['IGrad'].mean(axis=(-1,))[labels_test.index(cf_label)]
     result['perturbation']['IGrad'] = pt.test(importance, double_sided=True)
     result['IGrad'] = result['IGrad'].detach().cpu().numpy()
 
@@ -133,7 +135,7 @@ for step, s in enumerate(tqdm(data_test[:-1])):
 
     # self assessment:
     if len(spans) <= 1: p1 = "What is the most important phrase of the review influencing your assessment? Provide only the phrase as a string."
-    else:               p1 = f"What are the {len(spans):d} most important phrases of the review influencing your assessment? Provide only a list of strings with one phrase per line."
+    else:               p1 = f"What are the {len(spans):d} most important phrases of the review influencing your assessment? Provide a list of strings with one phrase per line."
     chat, _, _ = pipe.generate(p1, output_ids)
     result['chat'].extend(chat[2:])
 
@@ -141,7 +143,7 @@ for step, s in enumerate(tqdm(data_test[:-1])):
     result['spans']['extractive'] = [findSpan(pipe.getPrompt(p0, bos=False), s.strip('"-•* '), pipe.tokenizer) for s in chat[3][1].lower().split('\n')]
 
     # counterfactual:
-    chat, _, _ = pipe.generate("Provide a version of the review that would flip your assessment while changing as few words in the original review as possible. Make sure to answer with only the new version.", output_ids)
+    chat, _, _ = pipe.generate(f"Provide a version of the announcement that would alter your assessment to \"{cf_label}\" while changing as few words in the original announcement as possible.", output_ids)
     result['chat'].extend(chat[2:])
 
     cf = rex.findall(chat[3][1])
@@ -151,6 +153,7 @@ for step, s in enumerate(tqdm(data_test[:-1])):
     similarity, spans = similarityTest(input_ids, input_ids_cf)
     result['counterfactual'] = {
         'text'         : cf,
+        'target_label' : cf_label,
         'prediction'   : chat[1][1][:8].lower(),
         'similarity'   : similarity,
         'hidden_states': pipe.model.hiddenStates.detach().cpu().numpy(),

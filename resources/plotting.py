@@ -1,5 +1,6 @@
 import os
 import random
+import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -67,30 +68,29 @@ class Plotter:
             if self._save_dir is not None: plt.savefig(f'{dir}/{title}.pdf')
             plt.show()
 
-    def plot_perturbation(self, title:str, n_bins:int=100, legend:bool=True, bottom:float=0.):
+    def plot_perturbation(self, title:str, n_bins:int=6, legend:bool=True, top:float=1., bottom:float=0.):
         fig, axs = plt.subplots(nrows=2, ncols=len(self._results), figsize=(7,4.75))
 
         def plot_curve(ax, method, direction, **kwargs):
-            ys = np.full((len(self._results[model]), n_bins + 1), np.nan, dtype=float)
-            xs = np.arange(n_bins + 1, dtype=float) / (n_bins + 1.)
+            # extract x values (fraction of masked tokens):
+            x = np.array([[point['p'] for point in r['perturbation'][method][direction]]
+                for r in self._results[model]]).flatten()
 
-            for k, r in enumerate(self._results[model]):
-                points = iter(r['perturbation'][method][direction])
-                def get_next():
-                    point = next(points)
-                    return point['p'], float(r['prediction']['text'] in point['s'].lower())
+            # extract y values (probability of changed output):
+            y = 1. - np.array([[r['prediction']['text'] in point['s'].lower() for point in r['perturbation'][method][direction]]
+                for r in self._results[model]]).flatten().astype(float)
+            
+            # bin along x-axis:
+            bins = np.linspace(0., 1., n_bins) + .1
+            i = np.digitize(x, bins)
 
-                last_x, last_y = 0., 1.
-                next_x, next_y = get_next()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                x = [0,] + [np.mean(x[i==j])*100. for j in range(1,len(bins))]
+                y = [0,] + [np.mean(y[i==j])*100. for j in range(1,len(bins))]
 
-                for l, x in enumerate(xs):
-                    while x > next_x or (next_x - last_x == 0):
-                        last_x, last_y = next_x, next_y
-                        next_x, next_y = get_next()
-
-                    ys[k,l] = ((next_y - last_y) / (next_x - last_x) * (x - last_x)) + last_y
-
-            ax.plot(xs*100, np.nanmean(ys*100, axis=0), **kwargs)
+            # plot curves:
+            ax.plot(x, y, **kwargs)
 
         for i, direction in enumerate(['high2low', 'low2high']):
             for j, model in enumerate(self._results):
@@ -103,20 +103,21 @@ class Plotter:
                 ax2 = axs[i,j].twinx()
 
                 axs[i,j].grid(visible=True)
-                axs[i,j].set_ylim(top=101, bottom=100*bottom)
-                ax2.set_ylim(top=101, bottom=100*bottom)
+                axs[i,j].set_ylim(top=100*top+1, bottom=100*bottom-1)
+                ax2.set_ylim(top=100*top+1, bottom=100*bottom-1)
                 axs[i,j].set_xlim(left=-1, right=101)
+                
+                axs[0,j].arrow(50, 50 * (top-bottom) + 100 * bottom, -30, 30 * (top-bottom), width=5, head_length=10, ec='white', color='lightblue')
+                axs[0,j].text(35, 60 * (top-bottom) + 100 * bottom, 'better', ha='center', va='bottom', rotation=-45, color='lightblue', zorder=0)
 
-                axs[0,j].arrow(50, 50 * (1.-bottom) + 100 * bottom, -30, -30 * (1.-bottom), width=5, head_length=10, ec='white', color='lightblue')
-                axs[0,j].text(30, 30 * (1.-bottom) + 100 * bottom, 'better', ha='center', va='bottom', rotation=45, color='lightblue', zorder=0)
-
-                axs[1,j].arrow(50, 50 *(1.-bottom) + 100 * bottom,  30,  30 * (1.-bottom), width=5, head_length=10, ec='white', color='lightblue')
-                axs[1,j].text(60, 60 * (1.-bottom) + 100 * bottom, 'better', ha='center', va='bottom', rotation=45, color='lightblue', zorder=0)
+                axs[1,j].arrow(50, 50 * (top-bottom) + 100 * bottom, 30, -30 * (top-bottom), width=5, head_length=10, ec='white', color='lightblue')
+                axs[1,j].text(65, 30 * (top-bottom) + 100 * bottom, 'better', ha='center', va='bottom', rotation=-45, color='lightblue', zorder=0)
 
                 axs[0,j].set_title(model, fontweight ="bold")
                 axs[0,j].set_xticklabels([])
                 axs[1,j].set_xlabel('Masked Tokens [%]')
-
+                axs[i,j].set_box_aspect(1.)
+                
                 if j == 0:
                     axs[i,j].set_ylabel(f'{direction.replace("2", " to ")} imp.', fontweight ="bold")
                     ax2.set_yticklabels([])

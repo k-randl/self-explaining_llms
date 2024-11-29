@@ -1,11 +1,11 @@
 # Experiments for Gemma 2B:
-python ./gemma-2b-hazard.py
-python ./gemma-2b-movies.py
+python experiment-hazard.py google/gemma-1.1-2b-it
+python experiment-movies.py google/gemma-1.1-2b-it
 
 # Experiments for Gemma 7B:
-python ./gemma-7b-hazard.py
-python ./gemma-7b-movies.py
+python experiment-hazard.py google/gemma-1.1-7b-it
+python experiment-movies.py google/gemma-1.1-7b-it
 
-# Experiments for Llama 3 8B:
-python ./llama-8b-hazard.py
-python ./llama-8b-movies.py
+# Experiments for Llama 3.1 8B:
+python experiment-hazard.py meta-llama/Meta-Llama-3.1-8B-Instruct
+python experiment-movies.py meta-llama/Meta-Llama-3.1-8B-Instruct
