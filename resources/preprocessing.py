@@ -45,11 +45,11 @@ class PromptLoader():
     def decode(self, txt:str):
         return self._detokenize(txt.split())
 
-    def loadData(self, sample:Union[Tuple[str, str, dict], Any]) -> Tuple[str, bool, dict]:
+    def loadData(self, sample:Union[Tuple[str, str, dict], Any]) -> Tuple[str, str, dict]:
         if isinstance(sample, tuple): return sample
         raise ValueError(sample)
 
-    def createPrompt(self, sample:Union[Tuple[str, str, dict], Any], samples_train:List[Union[str, Tuple[str, bool, dict]]]=[]):
+    def createPrompt(self, sample:Union[Tuple[str, str, dict], Any], samples_train:List[Union[str, Tuple[str, str, dict]]]=[]):
         # add prefix:
         prompt  = [self.prefix]
 
