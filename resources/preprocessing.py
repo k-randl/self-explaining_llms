@@ -67,7 +67,7 @@ class PromptLoader():
         return self.separator.join(prompt), label, data
 
 class PromptLoaderIMDB(PromptLoader):
-    def loadData(self, sample:Union[Tuple[str, str, dict], str]) -> Tuple[str, bool, dict]:
+    def loadData(self, sample:Union[Tuple[str, str, dict], str]) -> Tuple[str, str, dict]:
         if isinstance(sample, tuple): return sample
 
         # decode json:
@@ -80,7 +80,7 @@ class PromptLoaderIMDB(PromptLoader):
         )
 
 class PromptLoaderFoodIncidents(PromptLoader):
-    def loadData(self, sample:Union[Tuple[str, str, dict], Tuple[str, str]]) -> Tuple[str, bool, dict]:
+    def loadData(self, sample:Union[Tuple[str, str, dict], Tuple[str, str]]) -> Tuple[str, str, dict]:
         #assert isinstance(sample, tuple), sample
         try: title, spans_string = sample
         except: return sample
