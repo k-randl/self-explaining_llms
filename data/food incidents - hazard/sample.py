@@ -10,8 +10,8 @@ incidents['key'] = [f'[{str(y)}-{str(m)}-{str(d)}] "{str(t)}"' for y, m, d, t in
 incidents = incidents[[
         'year', 'month', 'day',
         'title',
-#        'product-raw', 'product-category',
-        'hazard-raw', 'hazard-category',
+#        'product', 'product-category',
+        'hazard', 'hazard-category',
         'language', 'country'
 ]]
 
@@ -30,15 +30,15 @@ incidents = incidents[incidents['title-size'] >= MIN_SIZE]
 incidents = incidents[incidents['hazard-category'] != 'other hazard']
 
 
-# only samples with hazard-category in text:
-incidents = incidents[[hazard in title for title, hazard in incidents[['title', 'hazard-raw']].values]]
+# only samples with hazard in text:
+incidents = incidents[[hazard in title for title, hazard in incidents[['title', 'hazard']].values]]
 
 # take random sample of 200 texts:
 incidents = incidents[[
     'year', 'month', 'day',
     'title',
     'hazard-category',
-    'hazard-raw',
+    'hazard',
     'language', 'country'
 ]].sample(200).reset_index(drop=True)
 
