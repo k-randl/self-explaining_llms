@@ -9,13 +9,13 @@ from typing import Any, List, Tuple, Union, Optional
 #=======================================================================#
 
 class PromptLoader():
-    def __init__(self, prefix:str, postfix:str=' => ', separator:str='\n\n', seed:Optional[int]=None) -> None:
+    def __init__(self, prefix:str, suffix:str=' => ', separator:str='\n\n', seed:Optional[int]=None) -> None:
         super().__init__()
         if isinstance(seed, int): random.seed(seed)
 
-        # static prefix and postfix of prompts:
+        # static prefix and suffix of prompts:
         self.prefix    = prefix
-        self.postfix   = postfix
+        self.suffix    = suffix
         self.separator = separator
 
         # detokenizer for imdb dataset.
@@ -57,12 +57,12 @@ class PromptLoader():
         for sample_train in samples_train:
             txt, label, data = self.loadData(sample_train)
             txt = txt.replace('"', '')
-            prompt.append(f"\"{txt}\"{self.postfix}{label}")
+            prompt.append(f"\"{txt}\"{self.suffix}{label}")
 
         # add test sample:
         txt, label, data = self.loadData(sample)
         txt = txt.replace('"', '')
-        prompt.append(f"\"{txt}\"{self.postfix}")
+        prompt.append(f"\"{txt}\"{self.suffix}")
 
         return self.separator.join(prompt), label, data
 

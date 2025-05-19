@@ -2,7 +2,6 @@ import os
 import sys
 import re
 import pickle
-import random
 import torch
 import pandas as pd
 from huggingface_hub import login
@@ -20,9 +19,22 @@ if os.path.exists('.huggingface.token'):
 
 else: login(token=getpass(prompt='Huggingface login  token: '))
 
-MAX_SEQ_LEN = 512
-MAX_GEN_LEN = 128
-MODEL_NAME  = sys.argv[1]
+MAX_SEQ_LEN   = 512
+MAX_GEN_LEN   = 128
+MAX_LABEL_LEN = 10
+MODEL_NAME    = sys.argv[1]
+
+PRECISE_PROBS    = True
+PRECISE_SALIENCY = True
+SAVE_PREFIX      = ''
+for i, v in enumerate(sys.argv[2:]):
+    if   v == '-p': PRECISE_PROBS = False
+    elif v == '-s': PRECISE_SALIENCY = False
+    elif i == 0:    SAVE_PREFIX = v
+    else: raise ValueError(f'Unknown command line parameter "{v}".')
+
+if not PRECISE_PROBS: print('Using approximated label probabilities.')
+if not PRECISE_SALIENCY: print('Using approximated token saliencies.')
 
 #====================================================================================================#
 # Prepare:                                                                                           #
@@ -40,7 +52,7 @@ pipe = ChatGenerationPipeline.from_pretrained(
  
 # Load data:
 data_test   = pd.read_csv('data/food incidents - hazard/incidents_sample.csv', index_col=0)[['title', 'hazard-category', 'hazard-raw']].fillna('')
-labels_test = data_test['hazard-category'].unique().tolist()
+labels_test = ['allergens', 'biological', 'foreign bodies', 'chemical', 'organoleptic aspects', 'fraud']
 tokens_test = [pipe.tokenizer.convert_ids_to_tokens(pipe.tokenizer(l)['input_ids'][1:]) for l in labels_test]
 
 #====================================================================================================#
@@ -49,13 +61,13 @@ tokens_test = [pipe.tokenizer.convert_ids_to_tokens(pipe.tokenizer(l)['input_ids
 
 loader = PromptLoader(
     prefix    = "What is the reason for the recall of the food product in the following announcement?\n\n",
-    postfix   = "\n\nAssign one of the following labels: \"biological\", \"allergens\", \"chemical\", \"foreign bodies\", \"organoleptic aspects\", or \"fraud\". Make sure to answer only with the label.",
+    suffix    = "\n\nAssign one of the following labels: \"biological\", \"allergens\", \"chemical\", \"foreign bodies\", \"organoleptic aspects\", or \"fraud\". Make sure to answer only with the label or \"none\" if none of them applies.",
     separator = ""
 )
-prefix_size  = pipe.countTokens(loader.prefix, sot=True)
-postfix_size = pipe.countTokens(loader.postfix, eot=True)
+prefix_size = pipe.countTokens(loader.prefix, sot=True)
+suffix_size = pipe.countTokens(loader.suffix, eot=True)
 
-path = f'results/food incidents - hazard/{MODEL_NAME}.pkl'
+path = f'results/food incidents - hazard/{SAVE_PREFIX}{MODEL_NAME}.pkl'
 os.makedirs(os.path.dirname(path), exist_ok=True)
 
 results = []
@@ -69,35 +81,37 @@ for step, s in enumerate(tqdm(data_test.values)):
     p0, label, spans = loader.createPrompt(tuple(s))
 
     # generation:
-    chat, input_ids, output_ids = pipe.generate(p0, output_attentions=True, output_hidden_states=True, compute_grads=tokens_test)
+    chat, input_ids, output_ids = pipe.generate(p0, output_attentions=True, output_hidden_states=True, max_new_tokens=MAX_LABEL_LEN, compute_grads=tokens_test)
 
     result = {
         'chat': chat,
         'tokens': pipe.tokenizer.convert_ids_to_tokens(output_ids[0]),
-        'hidden_states': pipe.model.hiddenStates.detach().cpu().numpy(),
+#        'hidden_states': pipe.model.hiddenStates.detach().to(device='cpu', dtype=float).numpy(),
         'sample': {
-            'text': pipe.tokenizer.decode(input_ids[0,prefix_size:-postfix_size]),
+            'text': pipe.tokenizer.decode(input_ids[0,prefix_size:-suffix_size]),
             'start': prefix_size,
-            'end': input_ids.shape[1] - postfix_size,
+            'end': input_ids.shape[1] - suffix_size,
         },
         'label': {
             'text': label.lower(),
             'tokens': tokens_test[labels_test.index(label)],
         },
         'prediction': {
-            'text': chat[1][1].lower().split('\n\n')[0].strip('"*.'),
+            'text': chat[1][1].lower().split('\n')[0].strip('"*. '),
             'index': input_ids.shape[1]
         },
         'perturbation': {},
         'spans': {},
-        'AGrad': pipe.aGrad(),
-        'Grad': pipe.grad(),
-        'GradIn': pipe.gradIn(),
-        'IGrad': pipe.iGrad(),
     }
 
+    result['AGrad'] = pipe.aGrad(precise=PRECISE_SALIENCY)
+    result['GradIn'] = pipe.gradIn(precise=PRECISE_SALIENCY, window=slice(result['sample']['start'],result['sample']['end']), epsilon=1e-2)
+    result['GradH'] = pipe.gradH(precise=PRECISE_SALIENCY, window=slice(result['sample']['start'],result['sample']['end']), epsilon=1e-2)
+    result['IGrad'], result['IGrad-tokens'] = pipe.iGrad(max_tokens=2048, precise=PRECISE_SALIENCY)
+    result['Shap'] = pipe.shap(max_evals=500, fixed_prefix=loader.prefix, fixed_suffix=loader.suffix, max_new_tokens=MAX_LABEL_LEN)
+
     # generate counterfactual label:
-    label_probs = [(l, pipe.approximateOutputProbability(t)) for l, t in zip(labels_test, tokens_test) if l.lower() != result['prediction']['text']]
+    label_probs = [(l, pipe.getOutputProbability(t, precise=PRECISE_PROBS).detach().to(device='cpu', dtype=float).numpy()) for l, t in zip(labels_test, tokens_test) if l.lower() != result['prediction']['text']]
     label_probs.sort(key=lambda x: x[1], reverse=True)
 
     cf_label = label_probs[0][0]
@@ -112,22 +126,50 @@ for step, s in enumerate(tqdm(data_test.values)):
 
     pt = PerturbationTester(
         input_ids, result['sample']['start'], result['sample']['end'], pipe.mask_token_id,
-        pipe.model, pipe.tokenizer
+        pipe.model, pipe.tokenizer,
+        max_new_tokens=MAX_LABEL_LEN
     )
 
+    try: prediction_id = labels_test.index(result['prediction']['text'])
+    except ValueError: prediction_id = None
+
+    counterfactual_id = labels_test.index(cf_label)
+
     # attention based explanations:
-    importance = result['AGrad'].mean(axis=(1,))[labels_test.index(result['prediction']['text'])]
+    #importance = result['AGrad'].mean(axis=0)[prediction_id]
+    #importance = result['AGrad'].mean(axis=(0, 1))
+    if prediction_id is None: importance = result['AGrad'].mean(axis=(0, 1))
+    else:                     importance = result['AGrad'].mean(axis=0)[prediction_id]
     result['perturbation']['AGrad'] = pt.test(importance, double_sided=True)
-    result['AGrad'] = result['AGrad'].detach().cpu().numpy()
+    result['AGrad'] = result['AGrad'].detach().to(device='cpu', dtype=float).numpy()
 
     # gradient based explanations:
-    importance = result['GradIn'].mean(axis=(-1,))[labels_test.index(result['prediction']['text'])]
+    #importance = result['GradIn'][prediction_id]
+    #importance = result['GradIn'].mean(axis=0)
+    if prediction_id is None: importance = result['GradIn'].mean(axis=0)
+    else:                     importance = result['GradIn'][prediction_id]
     result['perturbation']['GradIn'] = pt.test(importance, double_sided=True)
-    result['GradIn'] = result['GradIn'].detach().cpu().numpy()
+    result['GradIn'] = result['GradIn'].detach().to(device='cpu', dtype=float).numpy()
 
-    importance = result['IGrad'].mean(axis=(-1,))[labels_test.index(cf_label)]
+    # gradient based explanations:
+    #importance = result['GradH'][prediction_id]
+    #importance = result['GradH'].mean(axis=0)
+    if prediction_id is None: importance = result['GradH'].mean(axis=0)
+    else:                     importance = result['GradH'][prediction_id]
+    result['perturbation']['GradH'] = pt.test(importance, double_sided=True)
+    result['GradH'] = result['GradH'].detach().to(device='cpu', dtype=float).numpy()
+
+    #importance = result['IGrad'].mean(axis=-1)[prediction_id]
+    #importance = result['IGrad'].mean(axis=(0, -1))
+    importance = result['IGrad'].mean(axis=-1)[counterfactual_id]
     result['perturbation']['IGrad'] = pt.test(importance, double_sided=True)
-    result['IGrad'] = result['IGrad'].detach().cpu().numpy()
+    result['IGrad'] = result['IGrad'].detach().to(device='cpu', dtype=float).numpy()
+
+    # model agnostic explanations:
+    if prediction_id is None: importance = result['Shap'].mean(axis=0)
+    else:                     importance = result['Shap'][prediction_id]
+    result['perturbation']['Shap'] = pt.test(importance, double_sided=True)
+    result['Shap'] = result['Shap'].detach().to(device='cpu', dtype=float).numpy()
 
 
     #================================================================================================#
@@ -151,20 +193,20 @@ for step, s in enumerate(tqdm(data_test.values)):
     result['spans']['extractive'] = [findSpan(pipe.getPrompt(p0, bos=False), s.strip('"- '), pipe.tokenizer) for s in chat[3][1].lower().split('\n')]
 
     # counterfactual:
-    chat, _, _ = pipe.generate(f"Provide a version of the announcement that would alter your assessment to \"{cf_label}\" while changing as few words in the original announcement as possible.", output_ids)
+    chat, _, _ = pipe.generate(f"Provide a version of the announcement that would alter your assessment to \"{cf_label}\" while changing as few words in the original announcement as possible. Make sure to only answer with the changed announcement.", output_ids)
     result['chat'].extend(chat[2:])
 
     cf = rex.findall(chat[3][1])
     cf = chat[3][1] if len(cf) == 0 else cf[0]
     p1, _, _ = loader.createPrompt((cf, False, None))
-    chat, input_ids_cf, _ = pipe.generate(p1, output_hidden_states=True)
+    chat, input_ids_cf, _ = pipe.generate(p1, output_hidden_states=True, max_new_tokens=MAX_LABEL_LEN)
     similarity, spans = similarityTest(input_ids, input_ids_cf)
     result['counterfactual'] = {
         'text'         : cf,
         'target_label' : cf_label,
         'prediction'   : chat[1][1].lower(),
         'similarity'   : similarity,
-        'hidden_states': pipe.model.hiddenStates.detach().cpu().numpy(),
+#        'hidden_states': pipe.model.hiddenStates.detach().to(device='cpu', dtype=float).numpy(),
     }
     result['spans']['counterfactual'] = spans
 

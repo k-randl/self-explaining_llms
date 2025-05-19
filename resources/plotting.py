@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 
 plt.rcParams["font.family"] = "serif"
 
+from .testing import create_perturbation_curve
 from typing import Iterable, List, Dict, Union, Optional
 
 class Plotter:
@@ -65,32 +66,24 @@ class Plotter:
 
             dir = f'{self._save_dir}/{model}'
             os.makedirs(dir, exist_ok=True)
-            if self._save_dir is not None: plt.savefig(f'{dir}/{title}.pdf')
+            if self._save_dir is not None: plt.savefig(f'{dir}/{title.replace(" ", "")}.pdf')
             plt.show()
 
-    def plot_perturbation(self, title:str, n_bins:int=6, legend:bool=True, top:float=1., bottom:float=0.):
+    def plot_perturbation(self, title:str, n_bins:int=100, legend:bool=True, top:float=1., bottom:float=0.):
+        if len(self._results) > 5:
+            model_types = set([m.split()[0] for m in self._results])
+
+            for tp in model_types:
+                plotter = Plotter({m:self._results[m] for m in self._results if m.startswith(tp)}, self._i_sample, save_dir=self._save_dir)
+                plotter.plot_perturbation(title + ' - ' + tp, n_bins=n_bins, legend=legend, top=top, bottom=bottom)
+
+            return
+
         fig, axs = plt.subplots(nrows=2, ncols=len(self._results), figsize=(7,4.75))
 
         def plot_curve(ax, method, direction, **kwargs):
-            # extract x values (fraction of masked tokens):
-            x = np.array([[point['p'] for point in r['perturbation'][method][direction]]
-                for r in self._results[model]]).flatten()
-
-            # extract y values (probability of changed output):
-            y = 1. - np.array([[r['prediction']['text'] in point['s'].lower() for point in r['perturbation'][method][direction]]
-                for r in self._results[model]]).flatten().astype(float)
-            
-            # bin along x-axis:
-            bins = np.linspace(0., 1., n_bins) + .1
-            i = np.digitize(x, bins)
-
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", category=RuntimeWarning)
-                x = [0,] + [np.mean(x[i==j])*100. for j in range(1,len(bins))]
-                y = [0,] + [np.mean(y[i==j])*100. for j in range(1,len(bins))]
-
-            # plot curves:
-            ax.plot(x, y, **kwargs)
+            x, y = create_perturbation_curve(self._results[model], method, direction, n_bins=n_bins)
+            ax.plot(x*100., y*100., **kwargs)
 
         for i, direction in enumerate(['high2low', 'low2high']):
             for j, model in enumerate(self._results):
@@ -134,21 +127,24 @@ class Plotter:
         fig.suptitle(title)
         plt.tight_layout()
 
-        if self._save_dir is not None: plt.savefig(f'{self._save_dir}/{title}.pdf')
+        if self._save_dir is not None: plt.savefig(f'{self._save_dir}/{title.replace(" ", "")}.pdf')
         plt.show()
 
         if self._save_dir is not None and legend:
             handles, labels = axs[0,0].get_legend_handles_labels()
-
-            plt.figure(figsize=(9,.3))
+            max_cols = 5
+            n_labels = len(labels)
+            n_rows = ((n_labels//max_cols) + int((n_labels%max_cols) > 0))
+            n_cols = ((n_labels//n_rows) + int((n_labels%n_rows) > 0))
+            plt.figure(figsize=(9,.3 * n_rows))
             plt.axes().set_axis_off()
             plt.legend(
                 handles=handles,
                 labels=labels,
                 loc='center',
-                ncols=len(handles)
+                ncols=n_cols
             )
-            plt.savefig(f'{self._save_dir}/Faithfullness - Legend.pdf')
+            plt.savefig(f'{self._save_dir}/Faithfulness-Legend.pdf')
             plt.show()
 
     def print_chat(self, model:str):
