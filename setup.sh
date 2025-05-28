@@ -19,3 +19,12 @@ cd ..
 wget -q -O - http://www.eraserbenchmark.com/zipped/movies.tar.gz | tar xvzf -
 cd ./movies
 python sample.py
+
+cd ..
+
+# download and process toxic spans dataset:
+cd "./toxic spans"
+wget https://raw.githubusercontent.com/ipavlopoulos/toxic_spans/refs/heads/master/data/annotations.csv
+wget https://raw.githubusercontent.com/ipavlopoulos/toxic_spans/refs/heads/master/data/comments.csv
+wget https://raw.githubusercontent.com/ipavlopoulos/toxic_spans/refs/heads/master/data/spans.csv
+python sample.py
