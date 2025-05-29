@@ -49,11 +49,11 @@ pipe = ChatGenerationPipeline.from_pretrained(
     torch_dtype=torch.bfloat16,
     attn_implementation="eager",
 )
- 
+
 # Load data:
 data_test   = pd.read_csv('data/food incidents - hazard/incidents_sample.csv', index_col=0)[['title', 'hazard-category', 'hazard-raw']].fillna('')
 labels_test = ['allergens', 'biological', 'foreign bodies', 'chemical', 'organoleptic aspects', 'fraud']
-tokens_test = [pipe.tokenizer.convert_ids_to_tokens(pipe.tokenizer(l)['input_ids'][1:]) for l in labels_test]
+tokens_test = [pipe.stripBOS(pipe.tokenizer.convert_ids_to_tokens(pipe.tokenizer(l)['input_ids'])) for l in labels_test]
 
 #====================================================================================================#
 # Prompt:                                                                                            #

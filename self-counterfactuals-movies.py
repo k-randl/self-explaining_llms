@@ -54,7 +54,7 @@ pipe = ChatGenerationPipeline.from_pretrained(
 with open('data/movies/val_sample.jsonl', 'r') as file:
     data_test = file.read().split('\n')
 labels_test = ['negative', 'positive']
-tokens_test = [pipe.tokenizer.convert_ids_to_tokens(pipe.tokenizer(l)['input_ids'][1:]) for l in labels_test]
+tokens_test = [pipe.stripBOS(pipe.tokenizer.convert_ids_to_tokens(pipe.tokenizer(l)['input_ids'])) for l in labels_test]
 
 #====================================================================================================#
 # Prompt:                                                                                            #

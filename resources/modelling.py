@@ -3,7 +3,7 @@ import shap
 import torch
 import torch.types
 import numpy as np
-from transformers import PreTrainedTokenizer, PreTrainedModel, AutoTokenizer, GemmaForCausalLM, Gemma2ForCausalLM, LlamaForCausalLM, GenerationConfig
+from transformers import PreTrainedTokenizer, PreTrainedModel, AutoTokenizer, GemmaForCausalLM, Gemma2ForCausalLM, LlamaForCausalLM, FalconForCausalLM, GenerationConfig
 from torch.nn.functional import one_hot
 from typing import List, Dict, Iterable, Optional, Callable, Union, Literal
 
@@ -538,7 +538,7 @@ def GenericModelForExplainableCausalLM(T:type):
                     vocab_size = max_tokens
                     token_ids  = self._x.unique()
                     token_ids  = torch.concat(
-                        (token_ids, torch.argsort((dx.max(3) - dx.min(3)).mean(dim=(0,1,2,3)), descending=True)[:vocab_size-token_ids.shape[0]]),
+                        (token_ids, torch.argsort((dx.max(3) - dx.min(3)).mean(dim=(0,1,2)), descending=True)[:vocab_size-token_ids.shape[0]]),
                         dim = 0
                     )
                     dx = dx[:,:,:,:,token_ids]
@@ -760,6 +760,7 @@ class ChatGenerationPipeline:
         self._bos = bos
         self._sot = sot
         self._eot = eot
+        self._pad_id = kwargs.get("pad_token_id", tokenizer.pad_token_id)
 
         rex = self._sot('##role##') + "##content##" + self._eot
         rex = rex.replace('(', '\\(')
@@ -770,6 +771,14 @@ class ChatGenerationPipeline:
         rex = rex.replace('##role##', '(?P<role>\w*?)')
         rex = rex.replace('##content##', '(?P<content>.*?)')
         self._rex = re.compile(rex, re.DOTALL)
+
+        # get bos size:
+        ids = self.tokenizer(self._bos, add_special_tokens=False, return_attention_mask=False)['input_ids']
+        self._bos_size = len(ids)
+
+        # get mask size:
+        ids = self.tokenizer(self.mask_token, add_special_tokens=False, return_attention_mask=False)['input_ids']
+        assert len(ids) == 1
 
         # get prefix and suffix sizes:
         ids = self.tokenizer(self.getPrompt(self.mask_token), add_special_tokens=False, return_attention_mask=False)['input_ids']
@@ -792,7 +801,11 @@ class ChatGenerationPipeline:
         for output in outputs: 
             # convert strings to Iterable of tokens:
             if isinstance(output, str):
-                output = self.tokenizer.convert_ids_to_tokens(self.tokenizer(output)['input_ids'][1:])
+                output = self.tokenizer.convert_ids_to_tokens(self.tokenizer(output, return_attention_mask=False).input_ids)
+
+            # drop bos-token:
+            if output[0] == self._bos:
+                output = output[self._bos_size:]
 
             # add new tokens to set and track their indices:
             token_indices.append([])
@@ -860,9 +873,21 @@ class ChatGenerationPipeline:
         prefix = pretrained_model_name_or_path.split('/')[0].lower()
         if prefix == "meta-llama":  return LlamaChatGenerationPipeline.from_pretrained(pretrained_model_name_or_path, max_seq_len, max_gen_len, **kwargs)
         if prefix == "google":      return GemmaChatGenerationPipeline.from_pretrained(pretrained_model_name_or_path, max_seq_len, max_gen_len, **kwargs)
-        if prefix == "mistralai":   return MistralChatGenerationPipeline.from_pretrained(pretrained_model_name_or_path, max_seq_len, max_gen_len, **kwargs)
         if prefix == "deepseek-ai": return LlamaChatGenerationPipeline.from_pretrained(pretrained_model_name_or_path, max_seq_len, max_gen_len, **kwargs)
+        if prefix == "tiiuae":      return FalconChatGenerationPipeline.from_pretrained(pretrained_model_name_or_path, max_seq_len, max_gen_len, **kwargs)
         raise NotImplementedError()
+
+    def stripBOS(self, tokens:Union[Iterable[str], Iterable[int]]) -> Union[Iterable[str], Iterable[int]]:
+        '''Removes the number of elements corresponding to the model specific BOS from `tokens`.'''
+        if isinstance(tokens[0], str):
+            if tokens[0] != self._bos: return tokens
+            else: return tokens[self._bos_size:]
+
+        if isinstance(tokens[0], int):
+            if tokens[0] != self.tokenizer._convert_token_to_id[self._bos]: return tokens
+            else: return tokens[self._bos_size:]
+
+        raise TypeError(tokens)
 
     def getOutputProbability(self, target:Union[Iterable[str], str], precise:bool=True):
         '''Calculates the probability `p(target) = p(t_0) * p(t_1|t_0) * ... * p(t_n|t_0...t_(n-1))` of
@@ -875,7 +900,7 @@ class ChatGenerationPipeline:
         Returns:        Probability of the target to be predicted during the last call to `.generate(...)`'''
         # convert string to Iterable of tokens:
         if isinstance(target, str):
-            target = self.tokenizer.convert_ids_to_tokens(self.tokenizer(target)['input_ids'][1:])
+            target = self.tokenizer.convert_ids_to_tokens(self.tokenizer(target)['input_ids'][self._bos_size:])
 
         # call base method:
         return self.model.getOutputProbability(target=list(target), precise=precise)[0]
@@ -1148,13 +1173,13 @@ class ChatGenerationPipeline:
 
         # append history and pad:
         bs, seq_len = len(input_ids), max([len(ids) for ids in input_ids])
-        if history is not None: seq_len += history.shape[1] - 2
+        if history is not None: seq_len += history.shape[1] - 1 - self._bos_size
 
-        input_ids_pad  = torch.full((bs, seq_len), self.tokenizer.pad_token_id, dtype=int, device=self.model.device)
+        input_ids_pad  = torch.full((bs, seq_len), self._pad_id, dtype=int, device=self.model.device)
         attention_mask = torch.zeros((bs, seq_len), dtype=int, device=self.model.device)
         for i, ids in enumerate(input_ids):
             if history is not None:
-                ids = torch.concatenate((history[i,:-1], ids[1:]))
+                ids = torch.concatenate((history[i,:-1], ids[self._bos_size:]))
 
             n = ids.shape[0]
             input_ids_pad[i, -n:] = ids
@@ -1205,9 +1230,10 @@ class GemmaChatGenerationPipeline(ChatGenerationPipeline):
         if pretrained_model_name_or_path.startswith("google/gemma-1"): model_type = GemmaForCausalLM
         if pretrained_model_name_or_path.startswith("google/gemma-2"): model_type = Gemma2ForCausalLM
         
+        GemmaForExplainableCausalLM = GenericModelForExplainableCausalLM(model_type)
         return GemmaChatGenerationPipeline(
             tokenizer   = AutoTokenizer.from_pretrained(pretrained_model_name_or_path),
-            model       = GenericModelForExplainableCausalLM(model_type).from_pretrained(pretrained_model_name_or_path, **kwargs),
+            model       = GemmaForExplainableCausalLM.from_pretrained(pretrained_model_name_or_path, **kwargs),
             max_seq_len = max_seq_len,
             max_gen_len = max_gen_len
         )
@@ -1253,9 +1279,10 @@ class LlamaChatGenerationPipeline(ChatGenerationPipeline):
 
     @staticmethod
     def from_pretrained(pretrained_model_name_or_path:str, max_seq_len:int, max_gen_len:int, pad_token_id:Optional[int]=None, **kwargs):
+        LlamaForExplainableCausalLM = GenericModelForExplainableCausalLM(LlamaForCausalLM)
         return LlamaChatGenerationPipeline(
             tokenizer    = AutoTokenizer.from_pretrained(pretrained_model_name_or_path),
-            model        = GenericModelForExplainableCausalLM(LlamaForCausalLM).from_pretrained(pretrained_model_name_or_path, **kwargs),
+            model        = LlamaForExplainableCausalLM.from_pretrained(pretrained_model_name_or_path, **kwargs),
             max_seq_len  = max_seq_len,
             max_gen_len  = max_gen_len,
             pad_token_id = pad_token_id
@@ -1270,23 +1297,68 @@ class LlamaChatGenerationPipeline(ChatGenerationPipeline):
 
         return prompt
 
-class MistralChatGenerationPipeline(ChatGenerationPipeline):
-    def __init__(self, tokenizer:PreTrainedTokenizer, model:PreTrainedModel, pad_token_id:Optional[int]=None):
+class FalconChatGenerationPipeline(ChatGenerationPipeline):
+    def __init__(self, tokenizer:PreTrainedTokenizer, model:PreTrainedModel, max_seq_len:int, max_gen_len:int, bos:str, sot:Callable[[str],str], pad:str):
+        bos_token_id = tokenizer.convert_tokens_to_ids(bos)
+        eos_token_id = tokenizer.eos_token_id #11
+        pad_token_id = tokenizer.convert_tokens_to_ids(pad)
+
         super().__init__(
             tokenizer    = tokenizer,
             model        = model,
-            bos          = '<s>',
-            sot          = lambda role: f'[/INST] ',
-            eot          = ' [/INST]',
+            bos          = bos,
+            sot          = sot,
+            eot          = '\n\n',
+            eos_token_id = eos_token_id,
+            pad_token_id = pad_token_id
+        )
+
+        self.model.generation_config = GenerationConfig(
+            bos_token_id = bos_token_id,
+            eos_token_id = eos_token_id,
+            pad_token_id = pad_token_id,
+
+            max_length = max_seq_len,
+            max_new_tokens = max_gen_len,
         )
 
     @property
     def mask_token(self):
-        return '<unk>'
+        return '###'
 
     @staticmethod
-    def from_pretrained(pretrained_model_name_or_path:str, **kwargs):
-        return LlamaChatGenerationPipeline(
-            tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path),
-            model     = GenericModelForExplainableCausalLM(LlamaForCausalLM).from_pretrained(pretrained_model_name_or_path, **kwargs)
-        )
+    def from_pretrained(pretrained_model_name_or_path:str, max_seq_len:int, max_gen_len:int, **kwargs):
+        # Falcon 1:
+        if '/Falcon-' in pretrained_model_name_or_path:
+            FalconForExplainableCausalLM = GenericModelForExplainableCausalLM(FalconForCausalLM)
+            return FalconChatGenerationPipeline(
+                tokenizer    = AutoTokenizer.from_pretrained(pretrained_model_name_or_path),
+                model        = FalconForExplainableCausalLM.from_pretrained(pretrained_model_name_or_path, **kwargs),
+                max_seq_len  = max_seq_len,
+                max_gen_len  = max_gen_len,
+                bos          = '',
+                sot          = lambda role: f'{role.capitalize()}: ',
+                pad          = '<|endoftext|>'
+            )
+
+        # Falcon 3:
+        elif '/Falcon3-' in pretrained_model_name_or_path:
+            FalconForExplainableCausalLM = GenericModelForExplainableCausalLM(LlamaForCausalLM)
+            return FalconChatGenerationPipeline(
+                tokenizer    = AutoTokenizer.from_pretrained(pretrained_model_name_or_path),
+                model        = FalconForExplainableCausalLM.from_pretrained(pretrained_model_name_or_path, **kwargs),
+                max_seq_len  = max_seq_len,
+                max_gen_len  = max_gen_len,
+                bos          = '', #'<|startoftext|>',
+                sot          = lambda role: f'<|{role}|>\n',
+                pad          = '<|pad|>'
+            )
+
+    def getPrompt(self, txt:str, bos:bool=False):
+        # create prompt string:
+        prompt = self._sot('user') + txt.strip().replace('\r\n', '\n').replace('\n\n', '\n') + self._eot + self._sot('assistant')
+
+        # add bos token:
+        if bos: prompt = self._bos + prompt
+
+        return prompt
