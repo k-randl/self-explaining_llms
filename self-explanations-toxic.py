@@ -177,7 +177,7 @@ for step, s in enumerate(tqdm(data_test.values)):
     #================================================================================================#
 
     # self assessment:
-    chat, _, _ = pipe.generate("What is the most important phrase of the prompt influencing your assessment? Provide only the phrase as a string.", output_ids)
+    chat, _, _ = pipe.generate("What is the most important phrase of the post influencing your assessment? Provide only the phrase as a string.", output_ids)
     result['chat'].extend(chat[2:])
 
     result['spans']['human'] = []
@@ -193,7 +193,7 @@ for step, s in enumerate(tqdm(data_test.values)):
     result['spans']['extractive'] = [findSpan(pipe.getPrompt(p0, bos=False), s.strip('"- '), pipe.tokenizer) for s in chat[3][1].lower().split('\n')]
 
     # counterfactual:
-    chat, _, _ = pipe.generate(f"Provide a version of the prompt that would alter your assessment to \"{cf_label}\" while changing as few words in the original prompt as possible. Make sure to only answer with the changed prompt.", output_ids)
+    chat, _, _ = pipe.generate(f"Provide a version of the post that would alter your assessment to \"{cf_label}\" while changing as few words in the original post as possible. Make sure to only answer with the changed post.", output_ids)
     result['chat'].extend(chat[2:])
 
     cf = rex.findall(chat[3][1])

@@ -94,11 +94,12 @@ class PerturbationTester:
         # run complete permutation only once:
         input_ids = input_ids.detach().clone()
         input_ids[:,sample_start:sample_end] = mask_token
+        attention_mask = torch.ones_like(input_ids)
 
         # generate:
         with torch.no_grad():
             with no_explain(model):
-                output_ids=model.generate(input_ids=input_ids, **kwargs)[0,self.seq_size:]
+                output_ids=model.generate(input_ids=input_ids, attention_mask=attention_mask, **kwargs)[0,self.seq_size:]
 
         # save:
         self.complete = {'p': 1., 's': self.tokenizer.decode(output_ids)}
@@ -235,21 +236,23 @@ class PearsonCorrelationTester:
     def boxplot(self, var:Union[str,List[float]], other:Union[Iterable[str],Iterable[List[float]],None]=None, path:Optional[str]=None, legend:bool=True, handles:Optional[List[Tuple[str,Patch]]]=None):
         path = path.replace(' ', '')
 
-        if len(self.variables) > 5:
-            model_sizes = list(set([m.split('-')[1] for m in self.variables]))
+        if len(self.variables) > 6:
+            model_sizes = list(set([int(m.split('-')[1].strip('\n\t B')) for m in self.variables]))
             model_sizes.sort()
             path, filetype = path.split('.')
 
             n = len(model_sizes)
-            limits = list(range(0, n+1, n // 2))
+            limits = [0, sum([s<=3 for s in model_sizes]), sum([s<=10 for s in model_sizes]), n]
             for i, j in zip(limits[:-1], limits[1:]):
+                if i == j: continue
+
                 sz = model_sizes[i:j]
                 plotter = PearsonCorrelationTester()
                 for s in sz: plotter.variables.update({
-                    m:self.variables[m] for m in self.variables if m.endswith(s)
+                    m:self.variables[m] for m in self.variables if m.endswith(f'{s:d}B')
                 })
                 
-                handles = plotter.boxplot(var=var, other=other, path=f'{path}-{sz[0]}-{sz[-1]}.{filetype}', handles=handles)
+                handles = plotter.boxplot(var=var, other=other, path=f'{path}-{sz[0]:d}B-{sz[-1]:d}B.{filetype}', handles=handles)
 
             return
 

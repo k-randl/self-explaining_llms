@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+MIN_SIZE = 50
+
 # %% load data:
 comments    = pd.read_csv('comments.csv', index_col=0)
 annotations = pd.read_csv('annotations.csv', index_col=0)
@@ -34,7 +36,26 @@ mask = np.array([len(l) == 1 for l in labels])
 
 sample = comments[mask]
 sample['label'] = [l[0] for l, m in zip(labels,mask) if m]
-sample['spans']  = [sample.loc[i,l] for i,l in zip(sample.index, sample.label.values)]
+sample['spans']  = [list(set(sample.loc[i,l])) for i,l in zip(sample.index, sample.label.values)]
+
+# %% filter duplicate texts:
+sample['comment_text'] = [t for t in sample['comment_text']]
+sample['comment_normed'] = [t.lower() for t in sample['comment_text']]
+sample = sample.loc[sample['comment_normed'].drop_duplicates().index]
+
+# %%  only texts longer than MIN_SIZE:
+sample['comment_size'] = [len(t) for t in sample['comment_text']]
+sample = sample[sample['comment_size'] >= MIN_SIZE]
+
+# %%  only texts with only one annotated span:
+sample['spans_size'] = [len(t) for t in sample['spans']]
+sample = sample[sample['spans_size'] == 1]
+
+# %% extract spans:
+sample['spans'] = [
+    txt[spn[0][0]:spn[0][1]]
+    for txt, spn in sample[['comment_text', 'spans']].values
+]
 
 # %% delete unneeded columns:
 sample = sample[['comment_text', 'label', 'spans']]

@@ -124,7 +124,7 @@ with no_explain(pipe, reset_on_generate=True):
             for _ in range(NUM_SAMPLES*2):
                 t = time.time_ns()
 
-                chat, _, _ = pipe.generate(f"Provide a version of the prompt that would alter your assessment to \"{l}\" while changing as few words in the original prompt as possible. Make sure to only answer with the changed prompt.", output_ids, do_sample=True, temperature=TEMPERATURE)
+                chat, _, _ = pipe.generate(f"Provide a version of the post that would alter your assessment to \"{l}\" while changing as few words in the original post as possible. Make sure to only answer with the changed post.", output_ids, do_sample=True, temperature=TEMPERATURE)
 
                 cf = rex.findall(chat[3][1])
                 cf = chat[3][1] if len(cf) == 0 else cf[0]
